@@ -20,7 +20,7 @@ logger.addHandler(console_handler)
 
 
 WATCHLIST_FILE = Path('./watchlist.json').resolve()
-DIRS_TO_WATCH = set()
+DIRS_WATCHED = set()
 
 
 def _load_watchlist():
@@ -45,14 +45,16 @@ def load_watchlist():
         watchlist = _load_watchlist()
         for dir in watchlist['watch']:
             path = Path(dir).resolve()
-            if path.is_dir():
-                DIRS_TO_WATCH.add(path)
+            if path.is_dir() and str(path) not in [watch.path for watch in DIRS_WATCHED]:
+                _watch = watcher.observer.schedule(TargetDirHandler(), path)
+                DIRS_WATCHED.add(_watch)
         
         for dir in watchlist['exclude']:
             path = Path(dir).resolve()
-            if path.is_dir():
-                if path in DIRS_TO_WATCH:
-                    DIRS_TO_WATCH.remove(path)
+            if path.is_dir() and str(path) in [watch.path for watch in DIRS_WATCHED]:
+                _watch = [watch for watch in DIRS_WATCHED if watch.path == str(path)][0]
+                watcher.observer.unschedule(_watch)
+                DIRS_WATCHED.remove(_watch)
     except:
         logger.error(f'Error loading watchlist at {WATCHLIST_FILE}')
 
@@ -116,6 +118,27 @@ def remove(*paths):
 
     # WatchListWatcher will pick changes up and load into memory
 
+def watchlist():
+    """Show watch and exclude lists.
+    """
+    
+    watchlist = _load_watchlist()
+
+    print('Watching:')
+    if watching := watchlist['watch']:
+        for dir in watching:
+            print(f'\t{dir}')
+    else:
+        print('\tNone')
+    
+    print('Excluding:')
+    if excluding := watchlist['exclude']:
+        for dir in excluding:
+            print(f'\t{dir}')
+    else:
+        print('\tNone')
+
+
 class WatchListHandler(FileSystemEventHandler):
     """Handle modifications to the watchlist.json file."""
 
@@ -123,33 +146,43 @@ class WatchListHandler(FileSystemEventHandler):
     def on_modified(event):
         logger.info('Reloading watchlist.json')
         load_watchlist()
-        print(DIRS_TO_WATCH)
 
-class WatchListWatcher:
-    """Watch the watchlist.json file for changes.
-    Should  changes be made, use it to update the list of folders
-    the main controller works with.
+class TargetDirHandler(FileSystemEventHandler):
+    """Schedule and upload new additions to cloud.
+    Scheduling involves queuing files for upload, retrying upon
+    failure, and/or re-queuing for later (when internet connection
+    is restored).
     """
+    
+    @staticmethod
+    def on_modified(event):
+        print(event.event_type, event.src_path)
+
+class Watcher:
+    """Watch given directories for changes."""
 
     def __init__(self):
         self.observer = Observer()
-    
-    def run(self):
-        event_handler = WatchListHandler()
 
-        self.observer.schedule(event_handler, WATCHLIST_FILE)
+        _watch = self.observer.schedule(WatchListHandler(), WATCHLIST_FILE)
+        DIRS_WATCHED.add(_watch)
+
+    def run(self):
         self.observer.start()
         try:
             while True:
-                time.sleep(10)
+                # 3 second intermittent pauses
+                time.sleep(3)
         except:
             self.observer.stop()
             print()
-            logger.info('Stopping controller.')
+            logger.info('Stopping watcher')
         
         self.observer.join()
 
+
 if __name__ == '__main__':
+    watcher = Watcher()
+
     load_watchlist()
-    w = WatchListWatcher()
-    w.run()
+    watcher.run()

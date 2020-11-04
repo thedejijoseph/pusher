@@ -7,3 +7,8 @@ Watch given folders for changes and upload new files to Google Drive
 - [] When new files or folders are added to these folders, upload them to Google Drive
 - [] If internet connection is not available, do nothing. User will have to manually push changes
 - [] Script will run in the background..
+- [] Package script for pypi
+
+## Notes
+
+watchdog.observers.Observer [only works](https://pythonhosted.org/watchdog/api.html#module-watchdog.observers) for Linux systems. Until other systems need to be supported, it should work just fine.

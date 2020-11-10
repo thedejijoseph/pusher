@@ -12,3 +12,5 @@ Watch given folders for changes and upload new files to Google Drive
 ## Notes
 
 watchdog.observers.Observer [only works](https://pythonhosted.org/watchdog/api.html#module-watchdog.observers) for Linux systems. Until other systems need to be supported, it should work just fine.
+
+Supporting only files, not dirs, at this time

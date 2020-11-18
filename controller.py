@@ -1,4 +1,5 @@
 
+import os, sys
 import time
 import json
 import logging
@@ -6,6 +7,10 @@ from pathlib import Path
 
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+
+import pydrive2
+from pydrive2.auth import GoogleAuth
+from pydrive2.drive import GoogleDrive
 
 
 logger = logging.getLogger(__name__)
@@ -21,7 +26,12 @@ logger.addHandler(console_handler)
 ROOT = Path(__file__).parent
 WATCHLIST_FILE = ROOT.joinpath(Path('./watchlist.json')).resolve()
 QUEUE_FILE = ROOT.joinpath(Path('./queue.json')).resolve()
+CREDS_FILE = ROOT.joinpath('./client_secrets.json').resolve()
+CONFIG_FILE = ROOT.joinpath('./config.json').resolve()
+CREDS_FILE = ROOT.joinpath('./client_creds.json').resolve()
+
 DIRS_WATCHED = set()
+CONFIG = {}
 
 
 def _load_watchlist():
@@ -47,6 +57,29 @@ def _load_queue():
         return json.loads(QUEUE_FILE.read_text())
     except:
         logger.error(f'Error loading queue at {QUEUE_FILE}')
+
+def _load_config():
+    global CONFIG
+
+    EMPTY = {"folder_id": ""}
+    try:
+        if not CONFIG_FILE.exists() or CONFIG_FILE.read_text() == "":
+            CONFIG_FILE.touch()
+            CONFIG_FILE.write_text(json.dumps(EMPTY))
+            return _load_config()
+        
+        CONFIG = json.loads(CONFIG_FILE.read_text())
+        return CONFIG
+    except:
+        logger.errorf=(f'Error loading config file at {CONFIG_FILE}')
+
+def update_config(patch):
+    
+    assert type(patch) is dict
+
+    config = _load_config()
+    config.update(patch)
+    CONFIG_FILE.write_text(json.dumps(config))
 
 def load_watchlist():
     try:
@@ -181,6 +214,7 @@ def status():
 def push():
     """Upload files in queue."""
 
+    main(temp=True)
     q = _load_queue()['to_do']
 
     for path in q:
@@ -220,12 +254,27 @@ def upload(path) -> bool:
     Will return True if upload was successful, False if not.
     """
 
-    import random
-    print(f'uploading {path}')
-    time.sleep(6)
-    if random.choice((True, False)):
+    # TODO: make provision for more nuanced error resolution/logging
+    # TODO: make async
+    
+    path = Path(path).resolve()
+    try:
+        file = drive.CreateFile({
+            "title": path.name,
+            "parents": [{
+                "id": CONFIG['folder_id']
+            }]
+        })
+        file.SetContentFile(path)
+        file.Upload()
         return True
-    else:
+    except pydrive2.files.ApiRequestError:
+        # there's some issue with the parent folder id
+        # most likely, PusherUploads was "Deleted Forever"
+        create_parent_folder()
+        return upload(path)
+    except:
+        # raise
         return False
 
 def schedule(path) -> None:
@@ -261,6 +310,54 @@ def delete(path) -> None:
     if path.exists() and path.is_file():
         path.unlink()
 
+def add_creds(path):
+    """Add the client_secrets.json file.
+    
+    Provide the path to a valid JSON file containing credentials
+    downloaded from your Google Cloud Console.
+    Command will replace previously added creds file.
+    """
+
+    file = Path(path).resolve()
+    
+    if not CREDS_FILE.exists():
+        CREDS_FILE.touch()
+    
+    CREDS_FILE.write_text(file.read_text())
+    print('client_secrets.json file added successfully.')
+
+def get_google_auth():
+    """Create a connection to Google Drive
+    To do this a client_secrets.json file must have been added.
+    Authentication (client_creds.json) will be created via a LocalWebServer.
+    If one already exists, it will be loaded from file."""\
+
+    # TODO: need to allow for expiry and refresh of tokens
+
+    global drive 
+
+    google_auth = GoogleAuth()
+
+    if not ROOT.joinpath(Path('./client_secrets.json')).exists():
+        print('Error! client_secrets.json is not available')
+        print('Run `add-creds --help` to get more information.')
+        sys.exit()
+    
+    try:
+        google_auth.LoadCredentialsFile(CREDS_FILE)
+    except:
+        google_auth.LocalWebserverAuth()
+        google_auth.SaveCredentialsFile(CREDS_FILE)
+    drive = GoogleDrive(google_auth)
+
+def create_parent_folder():
+    """Create a PusherUploads folder in the rot of My Drive"""
+
+    file = drive.CreateFile({'title': 'PusherUploads'})
+    file['mimeType'] = 'application/vnd.google-apps.folder'
+    file.Upload()
+    folder_id = file['id']
+    update_config({'folder_id': folder_id})
 
 class WatchListHandler(FileSystemEventHandler):
     """Handle modifications to the watchlist.json file."""
@@ -269,6 +366,14 @@ class WatchListHandler(FileSystemEventHandler):
     def on_modified(event):
         logger.info('Reloading watchlist.json')
         load_watchlist()
+
+class ConfigFileHandler(FileSystemEventHandler):
+    """Handle modifications to the config.json file."""
+
+    @staticmethod
+    def on_modified(event):
+        logger.info('Reloading config.json')
+        _load_config()
 
 class TargetDirHandler(FileSystemEventHandler):
     """Schedule and upload new additions to cloud.
@@ -317,7 +422,7 @@ class TargetDirHandler(FileSystemEventHandler):
         # unsure of impact if file is deleted while upload is being
         # uploaded.. will be handled by the upload method anyways 
         unschedule(event.src_path)
-    
+
 class Watcher:
     """Watch given directories for changes."""
 
@@ -326,6 +431,8 @@ class Watcher:
 
         _watch = self.observer.schedule(WatchListHandler(), WATCHLIST_FILE)
         DIRS_WATCHED.add(_watch)
+        _config = self.observer.schedule(ConfigFileHandler(), CONFIG_FILE)
+        DIRS_WATCHED.add(_config)
 
     def run(self):
         self.observer.start()
@@ -341,8 +448,35 @@ class Watcher:
         self.observer.join()
 
 
-if __name__ == '__main__':
-    watcher = Watcher()
+def main(temp=False):
+    """Run start-up checklist"""
 
-    load_watchlist()
-    watcher.run()
+    global watcher
+
+    _load_watchlist()
+    _load_queue()
+    _load_config()
+    get_google_auth()
+
+    folder_id = CONFIG.get('folder_id', None)
+    if not folder_id:
+        # try getting the folder id of PusherUploads on Drive
+        file_list = drive.ListFile({'q': "'root' in parents and mimeType='application/vnd.google-apps.folder'"}).GetList()
+        for file in file_list:
+            if file['title'] == 'PusherUploads':
+                folder_id = file['id']
+                update_config({'folder_id': folder_id})
+                break
+        # if not found, create one
+        if not folder_id:
+            create_parent_folder()
+    
+    if not temp:
+        watcher = Watcher()
+        load_watchlist()
+        logger.info('Starting watcher')
+        watcher.run()
+
+
+if __name__ == '__main__':
+    main()

@@ -144,3 +144,7 @@ dmypy.json
 
 # End of https://www.toptal.com/developers/gitignore/api/python
 
+
+# do not track creds file
+client_secrets.json
+client_creds.json

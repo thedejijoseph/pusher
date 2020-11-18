@@ -9,6 +9,7 @@ ipython = "*"
 [packages]
 watchdog = "*"
 argh = "*"
+pydrive2 = "*"
 
 [requires]
 python_version = "3.8"

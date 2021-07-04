@@ -23,7 +23,10 @@ console_handler.setFormatter(formatter)
 
 logger.addHandler(console_handler)
 
-ROOT = Path(__file__).parent
+ROOT = Path.home().joinpath('.config/pusher').resolve()
+if not ROOT.exists():
+    ROOT.mkdir()
+
 WATCHLIST_FILE = ROOT.joinpath(Path('./watchlist.json')).resolve()
 QUEUE_FILE = ROOT.joinpath(Path('./queue.json')).resolve()
 CREDS_FILE = ROOT.joinpath('./client_secrets.json').resolve()

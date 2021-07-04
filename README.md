@@ -1,36 +1,47 @@
 # Pusher
 
-Watch given folders for changes and upload new files to Google Drive
+Essentially, specify a folder to be automatically backed up to Google Drive.
+
+The tool will **watch** folders specified using the `watch` command and upload files currently in the folder and any new file added.
+
+## How to use
+
+1. Use the `sign-in` command to allow access to Google Drive
+2. Provide some folders to watch using the `watch` command
+3. Use the `start` command to begin watching specified folders (will continue running in background)
+
+## Commands
+
+
+## Notes
+
+- Tool supports only Linux systems
+- Only files, directly in the specified folders and all sub-folders, are uploaded
+- That is, upload does not retain file path
+- All files from all folders being watched are placed as is, in a folder in your Google Drive (PusherUploads)
+- Once created, the PusherUploads folder can be renamed or moved around to your origanizational preference (but not deleted)
+- If the PusherUploads folder is deleted, for the tool to upload new content, it will re-create the PusherUploads folder
+
+## Technical
+
+watchdog.observers.Observer [only works](https://pythonhosted.org/watchdog/api.html#module-watchdog.observers) for Linux systems. Until other systems need to be supported, it should work just fine.
+
+---
+
+### TO-DO
+
+The list below as well as in-line code
+
+- [] Put watlist.json, queue.json and config.json into one file
+- [] Provide instructions on creating client_secrets.json on Cloud Console
+- [] Add more descriptive logging, and command to read logs
+
+
+### Progress
 
 - [x] Provide the list of directories to watch from a file.
 - [x] Include a command to add new directories: `pusher watch .`
 - [X] When new files or folders are added to these folders, upload them to Google Drive
 - [X] If internet connection is not available, create a schedule of files that failed to upload. User will have to manually push changes
 - [] Script will run in the background..
-- [] Package script for pypi
-
-## Notes
-
-watchdog.observers.Observer [only works](https://pythonhosted.org/watchdog/api.html#module-watchdog.observers) for Linux systems. Until other systems need to be supported, it should work just fine.
-
-Supporting only files, not dirs, at this time
-
-
-After creating a folder in Drive, you should be able to rename or move it into a desired location.
-Do not delete the folder. If you do, Pusher will just create another one in root (My Drive).
-
-
-Install procedure
-+ move pusher soure code to install directory
-+ confirm that client_secrets.json exists
-+ optionally, run tests
-
-
-TODO:
-Put watlist.json, queue.json and config.json into one file
-Create tests for these scenarios:
-    Google Drive: PusherUploads is renamed, moved, trashed, deleted forever
-    Local: Files to be uploaded are moved, renamed, deleted or otherwise modified before upload is complete
-    App: Handling internet connections issues, handling other errors, functionality of app commands
-Provide step by step instructions for creating client_secrets.json on Cloud Console (with pictures)
-Clear logs would be needed for inspection, since app is to be running in background
+- [] Package script for pypi (or just make it installable)

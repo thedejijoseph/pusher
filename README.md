@@ -6,7 +6,7 @@ The tool will **watch** folders specified using the `watch` command and upload f
 
 ## How to use
 
-1. Use the `sign-in` command to allow access to Google Drive
+1. Use the `add-auth` command to allow access to Google Drive
 2. Provide some folders to watch using the `watch` command
 3. Use the `start` command to begin watching specified folders (will continue running in background)
 

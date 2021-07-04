@@ -1,7 +1,5 @@
 
-import os, sys
-import time
-import json
+import sys, time, json
 import logging
 from pathlib import Path
 
@@ -22,7 +20,7 @@ logger.setLevel(logging.DEBUG)
 
 console_formatter = logging.Formatter('%(message)s')
 console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
+console_handler.setLevel(logging.INFO)
 console_handler.setFormatter(console_formatter)
 
 logfile_formatter = logging.Formatter('%(asctime)s [%(levelname)s] - %(filename)s/%(funcName)s:%(lineno)d - %(message)s')
@@ -36,9 +34,8 @@ logger.addHandler(logfile_handler)
 
 WATCHLIST_FILE = ROOT.joinpath(Path('./watchlist.json')).resolve()
 QUEUE_FILE = ROOT.joinpath(Path('./queue.json')).resolve()
-CREDS_FILE = ROOT.joinpath('./client_secrets.json').resolve()
 CONFIG_FILE = ROOT.joinpath('./config.json').resolve()
-# CREDS_FILE = ROOT.joinpath('./client_creds.json').resolve()
+CREDS_FILE = ROOT.joinpath('./auth_creds.json').resolve()
 
 DIRS_WATCHED = set()
 CONFIG = {}
@@ -227,7 +224,7 @@ def status():
 def push():
     """Upload files in queue."""
 
-    main(temp=True)
+    setup()
     q = _load_queue()['to_do']
 
     logger.info('uploading scheduled files')
@@ -332,44 +329,61 @@ def delete(path) -> None:
         path.unlink()
         logger.info(f'deleted: {path}')
 
-def add_creds(path):
-    """Add the client_secrets.json file.
+def add_auth():
+    """Launches the authentication flow and saves access credentials.
+    """
+    if CREDS_FILE.exists():
+        logger.info('Saved credentials are available')
+        logger.info('Reset saved credentials with `reset-auth` before proceeding')
+        return
     
-    Provide the path to a valid JSON file containing credentials
-    downloaded from your Google Cloud Console.
-    Command will replace previously added creds file.
+    logger.info('A client_secrets.json file must be in the current directory')
+    logger.info('Attempting to set up authentication')
+
+    google_auth = GoogleAuth()
+    try:
+        google_auth.LocalWebserverAuth()
+        google_auth.SaveCredentialsFile(CREDS_FILE)
+    except Exception as e:
+        logger.info('Fatal error occured while trying to establish authentication. Consult logs with command `logs`.')
+        logger.debug(e)
+
+def reset_auth():
+    """Clear saved authentication credentials.
     """
 
-    file = Path(path).resolve()
-    
-    if not CREDS_FILE.exists():
-        CREDS_FILE.touch()
-    
-    CREDS_FILE.write_text(file.read_text())
-    logger.info('authentication credentials added successfully.')
+    CREDS_FILE.unlink()
 
 def get_google_auth():
     """Create a connection to Google Drive
-    To do this a client_secrets.json file must have been added.
-    Authentication (client_creds.json) will be created via a LocalWebServer.
-    If one already exists, it will be loaded from file."""\
+
+    On first use, a client_secrets.json file must be placed in the current directory.
+    If you need guidance on where to get the client_secrets.json file, run `auth-help`.
+    
+    Or consult project readme. Source: https://github.com/wrecodde/pusher#readme
+
+    If authentication has been previously set up, authentication credentials would be loaded
+    from saved file.
+    """
 
     # TODO: need to allow for expiry and refresh of tokens
 
     global drive 
 
     google_auth = GoogleAuth()
-
-    if not ROOT.joinpath(CREDS_FILE).exists():
-        print('Authentication credentials have not been added')
-        print('Run `add-creds --help` to get more information.')
+    
+    if CREDS_FILE.exists():
+        try:
+            google_auth.LoadCredentialsFile(CREDS_FILE)
+        except:
+            error_message = \
+            "Error occured when attempting to use saved auth credentials. \n\
+            Check your internet connection. If the error persists, clear saved credentials with `clear-auth`."
+            logger.error(error_message)
+    else:
+        logger.info('Unavailable auth credentials. Allow access with the `add-auth` command.')
         sys.exit()
     
-    try:
-        google_auth.LoadCredentialsFile(CREDS_FILE)
-    except:
-        google_auth.LocalWebserverAuth()
-        google_auth.SaveCredentialsFile(CREDS_FILE)
     drive = GoogleDrive(google_auth)
 
 def create_parent_folder():
@@ -380,6 +394,7 @@ def create_parent_folder():
     file.Upload()
     folder_id = file['id']
     update_config({'folder_id': folder_id})
+
 
 class WatchListHandler(FileSystemEventHandler):
     """Handle modifications to the watchlist.json file."""
@@ -470,11 +485,7 @@ class Watcher:
         self.observer.join()
 
 
-def main(temp=False):
-    """Run start-up checklist"""
-
-    global watcher
-
+def setup():
     _load_watchlist()
     _load_queue()
     _load_config()
@@ -492,13 +503,16 @@ def main(temp=False):
         # if not found, create one
         if not folder_id:
             create_parent_folder()
-    
-    if not temp:
-        watcher = Watcher()
-        load_watchlist()
-        logger.info('Starting watcher')
-        watcher.run()
 
+def stop():
+    pass
 
-if __name__ == '__main__':
-    main()
+def start():
+    global watcher
+
+    setup()
+
+    watcher = Watcher()
+    load_watchlist()
+    logger.info('Starting watcher ..in background')
+    watcher.run()

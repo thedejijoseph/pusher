@@ -13,25 +13,32 @@ from pydrive2.auth import GoogleAuth
 from pydrive2.drive import GoogleDrive
 
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-formatter = logging.Formatter('%(message)s')
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.DEBUG)
-console_handler.setFormatter(formatter)
-
-logger.addHandler(console_handler)
-
 ROOT = Path.home().joinpath('.config/pusher').resolve()
 if not ROOT.exists():
     ROOT.mkdir()
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+
+console_formatter = logging.Formatter('%(message)s')
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.DEBUG)
+console_handler.setFormatter(console_formatter)
+
+logfile_formatter = logging.Formatter('%(asctime)s [%(levelname)s] - %(filename)s/%(funcName)s:%(lineno)d - %(message)s')
+logfile_handler = logging.FileHandler(ROOT.joinpath('logs'))
+logfile_handler.setLevel(logging.DEBUG)
+logfile_handler.setFormatter(logfile_formatter)
+
+logger.addHandler(console_handler)
+logger.addHandler(logfile_handler)
+
 
 WATCHLIST_FILE = ROOT.joinpath(Path('./watchlist.json')).resolve()
 QUEUE_FILE = ROOT.joinpath(Path('./queue.json')).resolve()
 CREDS_FILE = ROOT.joinpath('./client_secrets.json').resolve()
 CONFIG_FILE = ROOT.joinpath('./config.json').resolve()
-CREDS_FILE = ROOT.joinpath('./client_creds.json').resolve()
+# CREDS_FILE = ROOT.joinpath('./client_creds.json').resolve()
 
 DIRS_WATCHED = set()
 CONFIG = {}
@@ -114,6 +121,7 @@ def watch(*paths):
         _path = str(Path(path).resolve())
         if _path in watchlist['exclude']:
             watchlist['exclude'].remove(_path)
+        logger.info(f'watching: {_path}')
         watchlist['watch'].append(_path)
     
     # remove duplicates
@@ -134,6 +142,7 @@ def exclude(*paths):
         _path = str(Path(path).resolve())
         if _path in watchlist['watch']:
             watchlist['watch'].remove(_path)
+        logger.info(f'excluding: {_path}')
         watchlist['exclude'].append(_path)
     
     # remove duplicates
@@ -156,6 +165,7 @@ def remove(*paths):
             watchlist['watch'].remove(_path)
         if _path in watchlist['exclude']:
             watchlist['exclude'].remove(_path)
+        logger.info(f'removed: {_path}')
     
     # rewrite list to file
     WATCHLIST_FILE.write_text(json.dumps(watchlist))
@@ -220,6 +230,7 @@ def push():
     main(temp=True)
     q = _load_queue()['to_do']
 
+    logger.info('uploading scheduled files')
     for path in q:
         uploaded = upload(path)
         if uploaded:
@@ -232,12 +243,14 @@ def collect():
     watching = _load_watchlist()['watch']
     q = _load_queue()['to_do']
 
+    no_of_files = 0
     all_ = {}
     for target_dir in watching:
         if Path(target_dir).exists():
             if not all_.get(target_dir):
                 all_[target_dir] = []
             files_in_dir = [path for path in Path(target_dir).iterdir() if path.is_file()]
+            no_of_files += len(files_in_dir)
             all_[target_dir].extend(files_in_dir)
     
     if all_:
@@ -245,6 +258,8 @@ def collect():
             for file in all_[dir]:
                 if str(file) not in q:
                     schedule(file)
+    s = "" if no_of_files == 1 else "s"
+    logger.info(f'collected {no_of_files} file{s} for upload')
 
 def upload(path) -> bool:
     """Upload files/directories to Google Drive
@@ -258,7 +273,6 @@ def upload(path) -> bool:
     """
 
     # TODO: make provision for more nuanced error resolution/logging
-    # TODO: make async
     
     path = Path(path).resolve()
     try:
@@ -270,6 +284,7 @@ def upload(path) -> bool:
         })
         file.SetContentFile(path)
         file.Upload()
+        logger.info(f'uploaded: {path}')
         return True
     except pydrive2.files.ApiRequestError:
         # there's some issue with the parent folder id
@@ -278,6 +293,7 @@ def upload(path) -> bool:
         return upload(path)
     except:
         # raise
+        logger.error(f'upload fail: {path}')
         return False
 
 def schedule(path) -> None:
@@ -291,6 +307,7 @@ def schedule(path) -> None:
     to_do.add(path)
     q['to_do'] = list(to_do) # ensure we don't have doubles
     QUEUE_FILE.write_text(json.dumps(q))
+    logger.info(f'scheduled: {path}')
 
 def unschedule(path) -> None:
     """Remove a path from the queue"""
@@ -303,6 +320,7 @@ def unschedule(path) -> None:
         to_do = list(set(to_do)) # still ensuring no duplicates
         q['to_do'] = to_do
         QUEUE_FILE.write_text(json.dumps(q))
+        logger.info(f'unscheduled: {path}')
 
 def delete(path) -> None:
     """File has been uploaded. Delete from the
@@ -312,6 +330,7 @@ def delete(path) -> None:
     path = Path(path).resolve()
     if path.exists() and path.is_file():
         path.unlink()
+        logger.info(f'deleted: {path}')
 
 def add_creds(path):
     """Add the client_secrets.json file.
@@ -327,7 +346,7 @@ def add_creds(path):
         CREDS_FILE.touch()
     
     CREDS_FILE.write_text(file.read_text())
-    print('client_secrets.json file added successfully.')
+    logger.info('authentication credentials added successfully.')
 
 def get_google_auth():
     """Create a connection to Google Drive
@@ -341,8 +360,8 @@ def get_google_auth():
 
     google_auth = GoogleAuth()
 
-    if not ROOT.joinpath(Path('./client_secrets.json')).exists():
-        print('Error! client_secrets.json is not available')
+    if not ROOT.joinpath(CREDS_FILE).exists():
+        print('Authentication credentials have not been added')
         print('Run `add-creds --help` to get more information.')
         sys.exit()
     

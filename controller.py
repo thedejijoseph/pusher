@@ -1,110 +1,21 @@
 
-import sys, time, json
-import logging
-from pathlib import Path
+from util import *
 
-from watchdog.observers import Observer
-from watchdog.events import FileSystemEventHandler
+def handle_command():
+    """Calling this function looks up changes in the commands.txt
+    file and executes if a valid command.
 
-import pydrive2
-from pydrive2.auth import GoogleAuth
-from pydrive2.drive import GoogleDrive
+    Commands are picked sequentially. Successful commands are removed from
+    commands.txt and commands-history.txt. If a command fails to excute, it is left
+    in commands.txt. This means that commands are only retried when a new
+    command is executed.
 
+    This patch work is to enable communication between a single execution of a
+    process running in the foreground and another continuously running in the background.
+    """
 
-ROOT = Path.home().joinpath('.config/pusher').resolve()
-if not ROOT.exists():
-    ROOT.mkdir()
-
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-console_formatter = logging.Formatter('%(message)s')
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_handler.setFormatter(console_formatter)
-
-logfile_formatter = logging.Formatter('%(asctime)s [%(levelname)s] - %(filename)s/%(funcName)s:%(lineno)d - %(message)s')
-logfile_handler = logging.FileHandler(ROOT.joinpath('logs'))
-logfile_handler.setLevel(logging.DEBUG)
-logfile_handler.setFormatter(logfile_formatter)
-
-logger.addHandler(console_handler)
-logger.addHandler(logfile_handler)
-
-
-WATCHLIST_FILE = ROOT.joinpath(Path('./watchlist.json')).resolve()
-QUEUE_FILE = ROOT.joinpath(Path('./queue.json')).resolve()
-CONFIG_FILE = ROOT.joinpath('./config.json').resolve()
-CREDS_FILE = ROOT.joinpath('./auth_creds.json').resolve()
-
-DIRS_WATCHED = set()
-CONFIG = {}
-
-
-def _load_watchlist():
-    EMPTY = {"watch": [], "exclude": []}
-    try:
-        if not WATCHLIST_FILE.exists():
-            WATCHLIST_FILE.touch()
-            WATCHLIST_FILE.write_text(json.dumps(EMPTY))
-            return _load_watchlist()
-        
-        return json.loads(WATCHLIST_FILE.read_text())
-    except:
-        logger.error(f'Error loading watchlist at {WATCHLIST_FILE}')
-
-def _load_queue():
-    EMPTY = {"to_do": []}
-    try:
-        if not QUEUE_FILE.exists() or QUEUE_FILE.read_text() == '':
-            QUEUE_FILE.touch()
-            QUEUE_FILE.write_text(json.dumps(EMPTY))
-            return _load_queue()
-
-        return json.loads(QUEUE_FILE.read_text())
-    except:
-        logger.error(f'Error loading queue at {QUEUE_FILE}')
-
-def _load_config():
-    global CONFIG
-
-    EMPTY = {"folder_id": ""}
-    try:
-        if not CONFIG_FILE.exists() or CONFIG_FILE.read_text() == "":
-            CONFIG_FILE.touch()
-            CONFIG_FILE.write_text(json.dumps(EMPTY))
-            return _load_config()
-        
-        CONFIG = json.loads(CONFIG_FILE.read_text())
-        return CONFIG
-    except:
-        logger.errorf=(f'Error loading config file at {CONFIG_FILE}')
-
-def update_config(patch):
-    
-    assert type(patch) is dict
-
-    config = _load_config()
-    config.update(patch)
-    CONFIG_FILE.write_text(json.dumps(config))
-
-def load_watchlist():
-    try:
-        watchlist = _load_watchlist()
-        for dir in watchlist['watch']:
-            path = Path(dir).resolve()
-            if path.is_dir() and str(path) not in [watch.path for watch in DIRS_WATCHED]:
-                _watch = watcher.observer.schedule(TargetDirHandler(), path)
-                DIRS_WATCHED.add(_watch)
-        
-        for dir in watchlist['exclude']:
-            path = Path(dir).resolve()
-            if path.is_dir() and str(path) in [watch.path for watch in DIRS_WATCHED]:
-                _watch = [watch for watch in DIRS_WATCHED if watch.path == str(path)][0]
-                watcher.observer.unschedule(_watch)
-                DIRS_WATCHED.remove(_watch)
-    except:
-        logger.error(f'Error loading watchlist at {WATCHLIST_FILE}')
+    commands = COMMANDS_FILE.read_text().splitlines()
+    # structure has been set up. will use if the need arises
 
 def watch(*paths):
     """Add directories to the watchlist.
@@ -224,7 +135,10 @@ def status():
 def push():
     """Upload files in queue."""
 
-    setup()
+    # setup call being removed from here.
+    # assumption then is taken that at _startup_, all neccessary
+    # setups have been made: loading watchlist and queue as well as
+    # google drive set up
     q = _load_queue()['to_do']
 
     logger.info('uploading scheduled files')
@@ -354,165 +268,6 @@ def reset_auth():
 
     CREDS_FILE.unlink()
 
-def get_google_auth():
-    """Create a connection to Google Drive
-
-    On first use, a client_secrets.json file must be placed in the current directory.
-    If you need guidance on where to get the client_secrets.json file, run `auth-help`.
-    
-    Or consult project readme. Source: https://github.com/wrecodde/pusher#readme
-
-    If authentication has been previously set up, authentication credentials would be loaded
-    from saved file.
-    """
-
-    # TODO: need to allow for expiry and refresh of tokens
-
-    global drive 
-
-    google_auth = GoogleAuth()
-    
-    if CREDS_FILE.exists():
-        try:
-            google_auth.LoadCredentialsFile(CREDS_FILE)
-        except:
-            error_message = \
-            "Error occured when attempting to use saved auth credentials. \n\
-            Check your internet connection. If the error persists, clear saved credentials with `clear-auth`."
-            logger.error(error_message)
-    else:
-        logger.info('Unavailable auth credentials. Allow access with the `add-auth` command.')
-        sys.exit()
-    
-    drive = GoogleDrive(google_auth)
-
-def create_parent_folder():
-    """Create a PusherUploads folder in the rot of My Drive"""
-
-    file = drive.CreateFile({'title': 'PusherUploads'})
-    file['mimeType'] = 'application/vnd.google-apps.folder'
-    file.Upload()
-    folder_id = file['id']
-    update_config({'folder_id': folder_id})
-
-
-class WatchListHandler(FileSystemEventHandler):
-    """Handle modifications to the watchlist.json file."""
-
-    @staticmethod
-    def on_modified(event):
-        logger.info('Reloading watchlist.json')
-        load_watchlist()
-
-class ConfigFileHandler(FileSystemEventHandler):
-    """Handle modifications to the config.json file."""
-
-    @staticmethod
-    def on_modified(event):
-        logger.info('Reloading config.json')
-        _load_config()
-
-class TargetDirHandler(FileSystemEventHandler):
-    """Schedule and upload new additions to cloud.
-    Scheduling involves queuing files for upload, retrying upon
-    failure, and/or re-queuing for later (when internet connection
-    is restored).
-    """
-
-    # handle only files in the root of the target dir, at this time
-    # all handlers are unfortunately blocking, at this time
-    
-    @staticmethod
-    def on_any_event(event):
-        pass
-
-    @staticmethod
-    def on_created(event):
-        # file is newly created in target dir or moved into target dir
-        # upload and remove or schedule for manual push/sync later.. 
-        # also raises a modified event, so handled there instead..
-        pass
-    
-    @staticmethod
-    def on_modified(event):
-        # file created or modified in place (before upload/delete)
-        # run upload anyway
-        if not event.is_directory:
-            uploaded = upload(event.src_path)
-            if uploaded:
-                delete(event.src_path)
-            else:
-                schedule(event.src_path)
-
-    @staticmethod
-    def on_moved(event):
-        # if file is moved out of the target dir scope
-        # (root to a sub dir, or to a parent/another dir),
-        # file will no longer be considered for upload, unschedule
-        # if file was only renamed, it will raise and be handled
-        # by a modified event
-        unschedule(event.src_path)
-    
-    @staticmethod
-    def on_deleted(event):
-        # file is deleted in place, simply unschedule
-        # unsure of impact if file is deleted while upload is being
-        # uploaded.. will be handled by the upload method anyways 
-        unschedule(event.src_path)
-
-class Watcher:
-    """Watch given directories for changes."""
-
-    def __init__(self):
-        self.observer = Observer()
-
-        _watch = self.observer.schedule(WatchListHandler(), WATCHLIST_FILE)
-        DIRS_WATCHED.add(_watch)
-        _config = self.observer.schedule(ConfigFileHandler(), CONFIG_FILE)
-        DIRS_WATCHED.add(_config)
-
-    def run(self):
-        self.observer.start()
-        try:
-            while True:
-                # 3 second intermittent pauses
-                time.sleep(3)
-        except:
-            self.observer.stop()
-            print()
-            logger.info('Stopping watcher')
-        
-        self.observer.join()
-
-
-def setup():
-    _load_watchlist()
-    _load_queue()
-    _load_config()
-    get_google_auth()
-
-    folder_id = CONFIG.get('folder_id', None)
-    if not folder_id:
-        # try getting the folder id of PusherUploads on Drive
-        file_list = drive.ListFile({'q': "'root' in parents and mimeType='application/vnd.google-apps.folder'"}).GetList()
-        for file in file_list:
-            if file['title'] == 'PusherUploads':
-                folder_id = file['id']
-                update_config({'folder_id': folder_id})
-                break
-        # if not found, create one
-        if not folder_id:
-            create_parent_folder()
-
-def stop():
-    pass
-
 def start():
-    global watcher
-
-    setup()
-
-    watcher = Watcher()
-    load_watchlist()
-    logger.info('Starting watcher ..in background')
-    watcher.run()
+    """Call watcher.py into the background with nohup"""
+    os.system("nohup python ./watcher.py &")

@@ -6,7 +6,9 @@ from controller import watch, exclude, remove, \
         watchlist, status, \
         push, collect, \
         add_auth, reset_auth, \
-        start, stop
+        start
+
+from watcher import stop
 
 
 parser = argh.ArghParser()
